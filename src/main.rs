@@ -21,11 +21,6 @@ use std::io::{BufWriter, Write};
 
 use hashbrown::{HashMap, HashSet};
 use std::str;
-//use fnv::FnvHasher;
-//use std::hash::BuildHasherDefault;
-//type FnvHashMap<T,V> = HashMap<T,V, BuildHasherDefault<FnvHasher>>;
-//type FnvHashSet<T> = HashSet<T, BuildHasherDefault<FnvHasher>>;
-//use hashbrown::hash_map::DefaultHashBuilder;
 
 use clap::{App};
 
@@ -202,7 +197,8 @@ fn process_hic(params: &Params, kmer_type: &HashMap<Vec<u8>, (i32, KMER_TYPE)>) 
             .expect("Unable to create file");
         let mut writer = BufWriter::new(writer);
         
-        let mut vars: Vec<i32> = Vec::new();
+        let mut vars1: Vec<i32> = Vec::new();
+        let mut vars2: Vec<i32> = Vec::new();
         let mut result: Vec<u8> = Vec::new();
         let mut linedex = 0;
         loop {
@@ -221,7 +217,7 @@ fn process_hic(params: &Params, kmer_type: &HashMap<Vec<u8>, (i32, KMER_TYPE)>) 
             for (_, kmer, _) in r1_sequence.canonical_kmers(params.kmer_size, &r1_rc) {
                 if let Some((kmer_id, kmer_type)) = kmer_type.get(kmer) {
                     if *kmer_type == KMER_TYPE::PAIRED_HET {
-                        vars.push(*kmer_id);
+                        vars1.push(*kmer_id);
                     } 
                 }
             }
@@ -231,22 +227,28 @@ fn process_hic(params: &Params, kmer_type: &HashMap<Vec<u8>, (i32, KMER_TYPE)>) 
             for (_, kmer, _) in r2_sequence.canonical_kmers(params.kmer_size, &r2_rc) {
                 if let Some((kmer_id, kmer_type)) = kmer_type.get(kmer) {
                     if *kmer_type == KMER_TYPE::PAIRED_HET {
-                        vars.push(*kmer_id);
+                        let mut already_has = false;
+                        for var in vars1.iter() {
+                            if var.abs() == kmer_id.abs() { already_has = true; }
+                        }
+                        if !already_has {
+                            vars2.push(*kmer_id);
+                        }
                     } 
                 }
             }
-            if vars.len() > 1 {
-                for index1 in 0..vars.len() {
-                    result.write_i32::<LittleEndian>(vars[index1]).expect("buffer fill fail");
+            if vars1.len() > 0 && vars2.len() > 0 {
+                for var in vars1.iter().chain(vars2.iter()) {
+                    result.write_i32::<LittleEndian>(*var).expect("buffer fill fail");
                 }
                 result.write_i32::<LittleEndian>(0).expect("buffer fill fail");
-                //std::io::stdout().lock().write_all(&result).expect("fail");
                 writer.write_all(&result).expect("write fail");
             }
             
             result.clear();
             linedex += 1;
-            vars.clear();
+            vars1.clear();
+            vars2.clear();
         }  
     });
     //write_1_zero(); 
@@ -294,13 +296,9 @@ fn process_txg(params: &Params, kmer_ids: &HashMap<Vec<u8>, i32>)  {
                 let r1_sequence = r1_sequence.normalize(false);
                 let r1_rc = r1_sequence.reverse_complement();
                 for (_, kmer, _) in r1_sequence.canonical_kmers(params.kmer_size, &r1_rc) {
-                //r1_sequence.canonical_kmers(21, &r1_rc).collect::<Vec<(usize, &[u8], bool)>>().into_par_iter().for_each(|(_, kmer, _)| {
                     if let Some(kmer_id) = kmer_ids.get(kmer) {
-                        //eprintln!("txg kmer of type {:?}",kmer_type.get(kmer).unwrap());
-                        //eprintln!("{}\t{}", barcode_id, std::str::from_utf8(&kmer).unwrap()); 
                         result.write_i32::<LittleEndian>(*barcode_id).expect("buffer fill fail");
                         result.write_i32::<LittleEndian>(*kmer_id).expect("buffer fail");
-                        //std::io::stdout().lock().write_all(&result).expect("fail");
                         writer.write_all(&result).expect("write fail");
                         result.clear();
                     }
