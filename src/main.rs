@@ -8,7 +8,7 @@ extern crate needletail;
 extern crate rayon;
 extern crate byteorder;
 use rayon::prelude::*;
-use needletail::Sequence;
+use needletail::{parse_fastx_file, Sequence, FastxReader};
 use flate2::read::GzDecoder;
 use std::io::BufReader;
 use std::io::BufRead;
@@ -21,6 +21,7 @@ use std::io::{BufWriter, Write};
 
 use hashbrown::{HashMap, HashSet};
 use std::str;
+
 
 use clap::{App};
 
@@ -41,8 +42,13 @@ fn main() {
         eprintln!("longreads");
         process_longreads(&params, &kmers);
     }
-
+    if params.fasta != None {
+        eprintln!("fasta");
+        process_fasta(&params, &kmers);
+    }
 }
+
+
 
 struct Kmers {
     paired_hets: HashMap<Vec<u8>, i32>,
@@ -107,77 +113,72 @@ fn load_kmers(params: &Params) -> (HashMap<Vec<u8>, i32>, HashMap<Vec<u8>, (i32,
     (kmers, kmer_type)
 }
 
-fn process_longreads(params: &Params, kmer_ids: &HashMap<Vec<u8>, i32>)  {
+fn process_fasta(params: &Params, kmer_ids: &HashMap<Vec<u8>, i32>) {
+    let mut fasta = "".to_string();
+    if let Some(f) = &params.fasta {
+        fasta = f.to_string();
+    }
+    let mut reader = parse_fastx_file(&fasta).expect("invalid path/file");
+    let mut current_readname = String::new();
+    let mut linedex = 0;
+    let writer = File::create(format!("{}/molecules_fasta.bin",params.output))
+        .expect("Unable to create file");
+    let mut writer = BufWriter::new(writer);
+    while let Some(record) = reader.next() {
+        let mut variants: Vec<i32> = Vec::new();
+        let record = record.expect("invalid record");
+        let seq = record.normalize(false);
+        let rc = seq.reverse_complement();
+        for (position, kmer, canonical) in seq.canonical_kmers(params.kmer_size, &rc) {
+            if let Some(kmer_id) = kmer_ids.get(kmer) {
+                 if canonical {
+                    variants.push(-*kmer_id);
+                 } else { variants.push(*kmer_id); }
+                 variants.push(position as i32);
+            }
+        }
+        handle_read(&variants, &mut writer);
+    }
+}
+
+fn process_longreads(params: &Params, kmer_ids: &HashMap<Vec<u8>, i32>) {
     let reads = &params.long_reads;
     
-    //write_2_zeros(); // delimiter, this file format isnt great
     let mut to_iterate: Vec<(usize, String)> = Vec::new();
     for (filenum, read) in reads.iter().enumerate() {
         to_iterate.push((filenum, read.to_string()));
     }
     to_iterate.par_iter().for_each(|(filenum, read_file)|  {
-        let mut reader = get_reader(read_file.to_string());
-        let mut current_readname = String::new();
-        let mut buf = vec![];
-        let mut linedex = 0;
-        //let mut molecule_vars: Vec<Vec<i32>> = Vec::new();
-
+        let mut reader = parse_fastx_file(&read_file).expect("invalid path/file");
         let writer = File::create(format!("{}/molecules_longreads_{:03}.bin",params.output,filenum))
             .expect("Unable to create file");
         let mut writer = BufWriter::new(writer);
-        //let mut vars: HashMap<i32, [u8; 2]> = HashMap::new(); // going to count how many of each allele across subreads to do consensus
-
-        loop {
-            buf.clear();
-            let bytes = reader.read_until(b'\n', &mut buf).expect("cannot read longread fastq");
-            if bytes == 0 {  break; } 
-            if linedex % 4 == 1 {
-                let mut variants: Vec<i32> = Vec::new();
-                let seq = &buf.sequence(); 
-                let seq = seq.normalize(false);
-                let rc = seq.reverse_complement();
-                for (position, kmer, canonical) in seq.canonical_kmers(params.kmer_size, &rc) {
-                    if let Some(kmer_id) = kmer_ids.get(kmer) {
-                        //let counts = vars.entry(kmer_id.abs()).or_insert([0u8; 2]);
-                        //if kmer_id < &0 { counts[1] += 1; } else { counts[0] += 1; }
-                        if canonical {
-                            variants.push(-*kmer_id);
-                        } else { variants.push(*kmer_id); }
-                        variants.push(position as i32);
-                    }
+        while let Some(record) = reader.next() {
+            let record = record.expect("invalid record");
+            let seq = record.normalize(false);
+            let rc = seq.reverse_complement();
+            let mut variants: Vec<i32> = Vec::new();
+            for (position, kmer, canonical) in seq.canonical_kmers(params.kmer_size, &rc) {
+                if let Some(kmer_id) = kmer_ids.get(kmer) {
+                    if canonical {
+                        variants.push(-*kmer_id);
+                    } else { variants.push(*kmer_id); }
+                    variants.push(position as i32);
                 }
-                handle_subreads(&variants, &mut writer);
             }
-            linedex += 1; buf.clear();
-        }        
+            handle_read(&variants, &mut writer);
+        }
+        
     });
 }
 
-//fn handle_subreads(vars: &HashMap<i32, [u8; 2]>) {
-fn handle_subreads(vars: &Vec<i32>, writer: &mut Write) {
+fn handle_read(vars: &Vec<i32>, writer: &mut Write) {
     let mut result: Vec<u8> = Vec::new();
-    //let mut to_output: Vec<i32> = Vec::new();
-    /*
-    for (kmer_id, counts) in vars.iter() {
-        if counts[0] > 3*counts[1] {
-            to_output.push(*kmer_id);
-        } else if counts[1] > 3*counts[0] {
-            to_output.push(-kmer_id);
-        }
-    }
-    */
-    //for kmer_id in vars.iter() {
-    //    to_output.push(*kmer_id);
-    //}
-    //if to_output.len() > 1 { // write 1 entry for every read (multiple subreads per read) even if there are no kmers... will make figuring out which 
-        for kmer in vars {
-           result.write_i32::<LittleEndian>(*kmer).expect("write fail"); 
-        } 
-        result.write_i32::<LittleEndian>(0).expect("buffer fill fail");
-        //std::io::stdout().lock().write_all(&result).expect("fail");
-        //write_1_zero();
-        writer.write_all(&result).expect("write fail");
-    //}
+    for kmer in vars {
+        result.write_i32::<LittleEndian>(*kmer).expect("write fail"); 
+    } 
+    result.write_i32::<LittleEndian>(0).expect("buffer fill fail");
+    writer.write_all(&result).expect("write fail");
 }
 
 fn process_hic(params: &Params, kmer_type: &HashMap<Vec<u8>, (i32, KMER_TYPE)>) {
@@ -188,10 +189,8 @@ fn process_hic(params: &Params, kmer_type: &HashMap<Vec<u8>, (i32, KMER_TYPE)>) 
         to_iterate.push((filenum, r1.to_string(), r2.to_string()));
     }
     to_iterate.par_iter().for_each(|(filenum, r1_file, r2_file)| {
-        let mut r1_reader = get_reader(r1_file.to_string());
-        let mut r2_reader = get_reader(r2_file.to_string()); 
-        let mut buf1 = vec![];
-        let mut buf2 = vec![];
+        let mut r1_reader = parse_fastx_file(&r1_file).expect("invalid path/file");
+        let mut r2_reader = parse_fastx_file(&r2_file).expect("invalid path/file");
 
         let writer = File::create(format!("{}/molecules_hic_{:03}.bin",params.output,filenum))
             .expect("Unable to create file");
@@ -200,41 +199,33 @@ fn process_hic(params: &Params, kmer_type: &HashMap<Vec<u8>, (i32, KMER_TYPE)>) 
         let mut vars1: Vec<i32> = Vec::new();
         let mut vars2: Vec<i32> = Vec::new();
         let mut result: Vec<u8> = Vec::new();
-        let mut linedex = 0;
-        loop {
-            let bytes = r1_reader.read_until(b'\n', &mut buf1).expect("cannot read r1file");
-            let bytes2 = r2_reader.read_until(b'\n', &mut buf2).expect("cannot read r2file");
-            if bytes == 0 || bytes2 == 0 { break; }
-            if linedex % 4 != 1 { 
-                linedex += 1;
-                buf1.clear();
-                buf2.clear();
-                continue; 
-            }
-            let r1_sequence = &buf1.sequence();
-            let r1_sequence = r1_sequence.normalize(false);
-            let r1_rc = r1_sequence.reverse_complement();
-            for (_, kmer, _) in r1_sequence.canonical_kmers(params.kmer_size, &r1_rc) {
-                if let Some((kmer_id, kmer_type)) = kmer_type.get(kmer) {
-                    if *kmer_type == KMER_TYPE::PAIRED_HET {
-                        vars1.push(*kmer_id);
-                    } 
+        while let Some(r1_record) = r1_reader.next() {
+             if let Some(r2_record) = r2_reader.next() {
+                let r1_rec = r1_record.expect("invalid record");
+                let r1_seq = r1_rec.normalize(false);
+                let r2_rec = r2_record.expect("invalid record");
+                let r2_seq = r2_rec.normalize(false);
+                let rc1 = r1_seq.reverse_complement();
+                let rc2 = r2_seq.reverse_complement();
+                for (_, kmer, _) in r1_seq.canonical_kmers(params.kmer_size, &rc1) {
+                    if let Some((kmer_id, kmer_type)) = kmer_type.get(kmer) {
+                        if *kmer_type == KMER_TYPE::PAIRED_HET {
+                            vars1.push(*kmer_id);
+                        } 
+                    }
                 }
-            }
-            let r2_sequence = &buf2.sequence();
-            let r2_sequence = r2_sequence.normalize(false);
-            let r2_rc = r2_sequence.reverse_complement();
-            for (_, kmer, _) in r2_sequence.canonical_kmers(params.kmer_size, &r2_rc) {
-                if let Some((kmer_id, kmer_type)) = kmer_type.get(kmer) {
-                    if *kmer_type == KMER_TYPE::PAIRED_HET {
-                        let mut already_has = false;
-                        for var in vars1.iter() {
-                            if var.abs() == kmer_id.abs() { already_has = true; }
-                        }
-                        if !already_has {
-                            vars2.push(*kmer_id);
-                        }
-                    } 
+                for (_, kmer, _) in r2_seq.canonical_kmers(params.kmer_size, &rc2) {
+                    if let Some((kmer_id, kmer_type)) = kmer_type.get(kmer) {
+                        if *kmer_type == KMER_TYPE::PAIRED_HET {
+                            let mut already_has = false;
+                            for var in vars1.iter() {
+                                if var.abs() == kmer_id.abs() { already_has = true; }
+                            }
+                            if !already_has {
+                                vars2.push(*kmer_id);
+                            }
+                        } 
+                    }
                 }
             }
             if vars1.len() > 0 && vars2.len() > 0 {
@@ -244,12 +235,10 @@ fn process_hic(params: &Params, kmer_type: &HashMap<Vec<u8>, (i32, KMER_TYPE)>) 
                 result.write_i32::<LittleEndian>(0).expect("buffer fill fail");
                 writer.write_all(&result).expect("write fail");
             }
-            
-            result.clear();
-            linedex += 1;
             vars1.clear();
             vars2.clear();
-        }  
+            result.clear();
+        }
     });
     //write_1_zero(); 
     //std::io::stdout().flush().expect("flush failed");
@@ -269,59 +258,45 @@ fn process_txg(params: &Params, kmer_ids: &HashMap<Vec<u8>, i32>)  {
         to_iterate.push((filenum, r1_file.to_string(), *r1_trim, r2_file.to_string(), *r2_trim));
     }
     to_iterate.par_iter().for_each(|(filenum, r1_file, r1_trim, r2_file, r2_trim)| {
-        // get readers
-        let mut r1_reader = get_reader(r1_file.to_string());
-        let mut r2_reader = get_reader(r2_file.to_string());
-        let mut buf1 = vec![];
-        let mut buf2 = vec![];
-
-        // get writer
+        let mut r1_reader = parse_fastx_file(&r1_file).expect("invalid path/file");
+        let mut r2_reader = parse_fastx_file(&r2_file).expect("invalid path/file");
+        let mut result: Vec<u8> = Vec::new();
+        let r1_trim = *r1_trim;
+        let r2_trim = *r2_trim;
         let writer = File::create(format!("{}/molecules_txg_{:03}.bin",params.output,filenum))
             .expect("Unable to create file");
         let mut writer = BufWriter::new(writer);
-        let mut linedex = 0;
-        let mut result: Vec<u8> = Vec::new();
-        loop {
-            let bytes = r1_reader.read_until(b'\n', &mut buf1).expect("cannot read r1file");
-            let bytes2 = r2_reader.read_until(b'\n', &mut buf2).expect("cannot read r2file");
-            if bytes == 0 || bytes2 == 0 { break; }
-            if linedex % 4 != 1 { 
-                linedex += 1;
-                buf1.clear();
-                buf2.clear();
-                continue; 
-            }
-            if let Some(barcode_id) = barcodes.get(&buf1[0..16]) {
-                let r1_sequence = &buf1[(16+r1_trim)..].sequence();
-                let r1_sequence = r1_sequence.normalize(false);
-                let r1_rc = r1_sequence.reverse_complement();
-                for (_, kmer, _) in r1_sequence.canonical_kmers(params.kmer_size, &r1_rc) {
-                    if let Some(kmer_id) = kmer_ids.get(kmer) {
-                        result.write_i32::<LittleEndian>(*barcode_id).expect("buffer fill fail");
-                        result.write_i32::<LittleEndian>(*kmer_id).expect("buffer fail");
-                        writer.write_all(&result).expect("write fail");
-                        result.clear();
+        while let Some(r1_record) = r1_reader.next() {
+            if let Some(r2_record) = r2_reader.next() {
+                let r1_rec = r1_record.expect("invalid record");
+                let r1_seq = r1_rec.normalize(false);
+                if let Some(barcode_id) = barcodes.get(&r1_rec.sequence()[0..16]) {
+                    let r2_rec = r2_record.expect("invalid record");
+                    let r2_seq = r2_rec.normalize(false);
+                    let rc1 = r1_seq.reverse_complement();
+                    let rc2 = r2_seq.reverse_complement();
+                    for (index, kmer, _) in r1_seq.canonical_kmers(params.kmer_size, &rc1) {
+                        if index > r1_trim {
+                            if let Some(kmer_id) = kmer_ids.get(kmer) {
+                                result.write_i32::<LittleEndian>(*barcode_id).expect("buffer fill fail");
+                                result.write_i32::<LittleEndian>(*kmer_id).expect("buffer fail");
+                                writer.write_all(&result).expect("write fail");
+                                result.clear();
+                            }
+                        }
                     }
-                }
-                let r2_sequence = &buf2[*r2_trim..].sequence();
-                let r2_sequence = r2_sequence.normalize(false);
-                let r2_rc = r2_sequence.reverse_complement();
-                for (_, kmer, _) in r2_sequence.canonical_kmers(params.kmer_size, &r2_rc) {
-                //r2_sequence.canonical_kmers(21, &r2_rc).collect::<Vec<(usize, &[u8], bool)>>().into_par_iter().for_each(|(_, kmer, _)| {
-                    if let Some(kmer_id) = kmer_ids.get(kmer) {
-                        //println!("{}\t{}", barcode_id, kmer_id);//std::str::from_utf8(&kmer).unwrap()); 
-                        let mut result: Vec<u8> = Vec::new();
-                        result.write_i32::<LittleEndian>(*barcode_id).expect("buffer fill fail");
-                        result.write_i32::<LittleEndian>(*kmer_id).expect("buffer fill fail");
-                        //std::io::stdout().lock().write_all(&result).expect("fail");
-                        writer.write_all(&result).expect("write fail");
-                        result.clear();
+                    for (index, kmer, _) in r2_seq.canonical_kmers(params.kmer_size, &rc2) {
+                        if let Some(kmer_id) = kmer_ids.get(kmer) {
+                            if index > r2_trim {
+                                result.write_i32::<LittleEndian>(*barcode_id).expect("buffer fill fail");
+                                result.write_i32::<LittleEndian>(*kmer_id).expect("buffer fail");
+                                writer.write_all(&result).expect("write fail");
+                                result.clear();
+                            }
+                        }
                     }
                 }
             }
-            buf1.clear();
-            buf2.clear();
-            linedex += 1;
         }
     });
     //write_2_zeros(); // delimiter
@@ -344,7 +319,7 @@ fn load_whitelist(barcode_file: &String) -> HashMap<Vec<u8>, i32> {
     barcodes 
 }
 
-fn get_reader(filename: String) -> BufReader<Box<dyn Read>> {
+pub fn get_reader(filename: String) -> BufReader<Box<dyn Read>> {
     let filetype: Vec<&str> = filename.split(".").collect();
     let filetype = filetype[filetype.len()-1];
     let file = match File::open(filename.clone()) {
@@ -373,6 +348,7 @@ struct Params {
     hic_r2s: Vec<String>,
     output: String,
     kmer_size: u8,
+    fasta: Option<String>,
 }
 
 fn load_params() -> Params {
@@ -386,66 +362,83 @@ fn load_params() -> Params {
         Some(x) => Some(x.to_string()),
         None => None,
     };
-    let txg_r1s_tmp = match params.values_of("txg_r1s") {
-        Some(x) => x.collect(),
-        None => Vec::new(),
-    };
+
     let mut txg_r1s: Vec<String> = Vec::new();
-    for x in txg_r1s_tmp { txg_r1s.push(x.to_string()); }
-    let txg_r2s_tmp = match params.values_of("txg_r2s") {
-        Some(x) => x.collect(),
-        None => Vec::new(),
-    };
     let mut txg_r2s: Vec<String> = Vec::new();
-    for x in txg_r2s_tmp { txg_r2s.push(x.to_string()); }
-    let txg_trim_tmp = match params.values_of("txg_trim_r1s") {
-        Some(x) => x.collect(),
-        None => Vec::new(),
-    };
     let mut txg_trim_r1s: Vec<usize> = Vec::new();
-    for trim in txg_trim_tmp {
-        txg_trim_r1s.push(trim.parse::<usize>().unwrap());
-    }
-    let txg_trim_tmp = match params.values_of("txg_trim_r2s") {
-        Some(x) => x.collect(),
-        None => Vec::new(),
-    };
     let mut txg_trim_r2s: Vec<usize> = Vec::new();
-    for trim in txg_trim_tmp {
-        txg_trim_r2s.push(trim.parse::<usize>().unwrap());
+    match params.value_of("txg_reads") {
+        Some(txg_fofn) => {
+            let f = File::open(txg_fofn).expect("Unable to open txg fofn");
+            let f = BufReader::new(f);
+
+            for (linedex, line) in f.lines().enumerate() {
+                let line = line.expect("Unable to read txg fofn line");
+                let vec: Vec<&str> = line.split_whitespace().collect();
+                let trim = vec[1].to_string().parse::<usize>().unwrap();
+                if linedex % 2 == 0 {
+                    txg_r1s.push(vec[0].to_string());
+                    txg_trim_r1s.push(trim);
+                } else {
+                    txg_r2s.push(vec[0].to_string());
+                    txg_trim_r2s.push(trim);
+                }
+            }
+        },
+        None => (),
     }
-    assert!(txg_trim_r1s.len() == txg_r1s.len(), "If you specify txg_r1s, must also specify trim length for each file (txg_trim_r1s) {} {}",txg_r1s.len(), txg_trim_r1s.len());
-    assert!(txg_trim_r2s.len() == txg_r2s.len(), "If you specify txg_r2s, must also specify trim length for each file (txg_trim_r2s) {} {}",txg_r2s.len(), txg_trim_r2s.len());
-    let hic_r1s_tmp = match params.values_of("hic_r1s") {
-        Some(x) => x.collect(),
-        None => Vec::new(),
-    };
+
     let mut hic_r1s: Vec<String> = Vec::new();
-    for x in hic_r1s_tmp { hic_r1s.push(x.to_string()); }
-    let hic_r2s_tmp = match params.values_of("hic_r2s") {
-        Some(x) => x.collect(),
-        None => Vec::new(),
-    };
     let mut hic_r2s: Vec<String> = Vec::new();
-    for x in hic_r2s_tmp { hic_r2s.push(x.to_string()); }
-    assert!(hic_r2s.len() == hic_r1s.len(), "If you specify hic_r1s or hic_r2s, must also specify the same number of the other.");
+    match params.value_of("hic_reads") {
+        Some(hic_fofn) => {
+            let f = File::open(hic_fofn).expect("Unable to open hic fofn");
+            let f = BufReader::new(f);
+
+            for (linedex, line) in f.lines().enumerate() {
+                let line = line.expect("Unable to read hic fofn line");
+                if linedex % 2 == 0 {
+                    hic_r1s.push(line.to_string());
+                } else {
+                    hic_r2s.push(line.to_string());
+                }
+            }
+        },
+        None => (),
+    }
 
     let txg_barcodes = match params.value_of("txg_barcodes") {
         Some(x) => Some(x.to_string()),
         None => {assert!(txg_r1s.len() == 0, "if you specify txg_files, you must also specify txg_barcodes");  None},
     };
-    let long_reads_tmp = match params.values_of("long_reads") {
-        Some(x) => x.collect(),
-        None => Vec::new(),
-    };
+
     let mut long_reads: Vec<String> = Vec::new();
-    for x in long_reads_tmp { long_reads.push(x.to_string()); }
+    match params.value_of("long_reads") {
+        Some(ccs_fofn) => {
+            let f = File::open(ccs_fofn).expect("Unable to open long read fofn");
+            let f = BufReader::new(f);
+
+            for line in f.lines() {
+                let line = line.expect("Unable to read long read fofn line");
+                long_reads.push(line.to_string());
+            }
+        },
+        None => (),
+    }
+
     let output = params.value_of("output").unwrap();
 
     let kmer_size = params.value_of("kmer_size").unwrap();
     let kmer_size: u8 = kmer_size.to_string().parse::<u8>().unwrap();
 
+    let fasta: Option<String> = match params.value_of("fasta") {
+        Some(x) => Some(x.to_string()),
+        None => None,
+    };
+    
+
     Params{
+        fasta: fasta,
         output: output.to_string(),
         kmer_size: kmer_size,
         paired_kmers: paired_kmers,
