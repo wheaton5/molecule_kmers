@@ -20,30 +20,11 @@ args:
         takes_value: true
         required: false
         help: unpaired kmers
-    - txg_r1s:
-        long: txg_r1s
-        multiple: true
+    - txg_reads:
+        long: txg_reads
         takes_value: true
         required: false
-        help: 10x genomics linked read files in fastq/fastq.gz format
-    - txg_r2s:
-        long: txg_r2s
-        multiple: true
-        takes_value: true
-        required: false
-        help: 10x genomics linked read files in fastq/fastq.gz format
-    - txg_trim_r1s:
-        long: txg_trim_r1s
-        multiple: true
-        takes_value: true
-        required: false
-        help: how any bases to trim after the barcode for each 10x genomics file
-    - txg_trim_r2s:
-        long: txg_trim_r2s
-        multiple: true
-        takes_value: true
-        required: false
-        help: how any bases to trim after the barcode for each 10x genomics file
+        help: 10x genomics linked read fofn in format R1_filename\ttrim\nR2_filename\ttrim
     - txg_barcodes:
         long: txg_barcodes
         required: false
@@ -51,21 +32,14 @@ args:
         help: 10x genomics barcode whitelist
     - long_reads:
         long: long_reads
-        multiple: true
         takes_value: true
         required: false
-        help: pacbio or oxford nanopore data in fasta/fastq optionally gzipped
-    - hic_r1s:
-        long: hic_r1s
-        multiple: true
+        help: pacbio fofn
+    - hic_reads:
+        long: hic_reads
         required: false
         takes_value: true
-        help: hic r1 files 
-    - hic_r2s:
-        long: hic_r2s
-        multiple: true
-        required: false
-        takes_value: true
+        help: hic fofn R1/R2 interleaved
     - threads:
         short: t
         long: threads
@@ -77,4 +51,9 @@ args:
         long: kmer_size
         required: true
         help: kmer_size
+        takes_value: true
+    - fasta:
+        short: f
+        required: false
+        help: fasta file
         takes_value: true
