@@ -148,6 +148,11 @@ fn process_longreads(params: &Params, kmer_ids: &HashMap<Vec<u8>, i32>) {
     for (filenum, read) in reads.iter().enumerate() {
         to_iterate.push((filenum, read.to_string()));
     }
+    let f = File::create(format!("{}/ccs.fofn", params.output)).expect("Unable to create file");
+    let mut f = BufWriter::new(f);
+    for (filenum, _r) in to_iterate.iter() {
+        f.write_all(format!("{}/molecules_longreads_{:03}.bin\n", params.output, filenum).as_bytes()).expect("failed to write");
+    }
     to_iterate.par_iter().for_each(|(filenum, read_file)|  {
         let mut reader = parse_fastx_file(&read_file).expect("invalid path/file");
         let writer = File::create(format!("{}/molecules_longreads_{:03}.bin",params.output,filenum))
@@ -187,6 +192,11 @@ fn process_hic(params: &Params, kmer_type: &HashMap<Vec<u8>, (i32, KMER_TYPE)>) 
     let mut to_iterate: Vec<(usize, String, String)> = Vec::new();
     for (filenum, r1, r2) in izip!(0..read1s.len(), read1s, read2s) {
         to_iterate.push((filenum, r1.to_string(), r2.to_string()));
+    }
+    let f = File::create(format!("{}/hic.fofn", params.output)).expect("Unable to create file");
+    let mut f = BufWriter::new(f);
+    for (filenum, _r1, _r2) in to_iterate.iter() {
+        f.write_all(format!("{}/molecules_hic_{:03}.bin\n", params.output, filenum).as_bytes()).expect("failed to write");
     }
     to_iterate.par_iter().for_each(|(filenum, r1_file, r2_file)| {
         let mut r1_reader = parse_fastx_file(&r1_file).expect("invalid path/file");
@@ -257,6 +267,12 @@ fn process_txg(params: &Params, kmer_ids: &HashMap<Vec<u8>, i32>)  {
         izip!(0..read1s.len(), read1s, read1_trims, read2s, read2_trims) {
         to_iterate.push((filenum, r1_file.to_string(), *r1_trim, r2_file.to_string(), *r2_trim));
     }
+    let f = File::create(format!("{}/txg.fofn", params.output)).expect("Unable to create file");
+    let mut f = BufWriter::new(f);
+    for (filenum, r1, _, r2, _) in to_iterate.iter() {
+        f.write_all(format!("{}/molecules_txg_{:03}.bin\n", params.output, filenum).as_bytes()).expect("failed to write");
+    }
+    
     to_iterate.par_iter().for_each(|(filenum, r1_file, r1_trim, r2_file, r2_trim)| {
         let mut r1_reader = parse_fastx_file(&r1_file).expect("invalid path/file");
         let mut r2_reader = parse_fastx_file(&r2_file).expect("invalid path/file");
