@@ -121,7 +121,7 @@ fn process_fasta(params: &Params, kmer_ids: &HashMap<Vec<u8>, i32>) {
     let mut reader = parse_fastx_file(&fasta).expect("invalid path/file");
     let mut current_readname = String::new();
     let mut linedex = 0;
-    let writer = File::create(format!("{}/molecules_fasta.bin",params.output))
+    let writer = File::create(format!("{}/fasta_kmers.bin",params.output))
         .expect("Unable to create file");
     let mut writer = BufWriter::new(writer);
     while let Some(record) = reader.next() {
