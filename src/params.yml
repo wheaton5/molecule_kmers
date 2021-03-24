@@ -13,7 +13,7 @@ args:
         long: paired_kmers
         short: p
         takes_value: true
-        required: false
+        required: true
         help: kmer pairs (usually heterozygous pairs) in tsv kmer1\tkmer2\tcount\tcount (kmer is reverse compliment canonicalized)
     - unpaired_kmers:
         long: u
