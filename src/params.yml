@@ -54,6 +54,7 @@ args:
         takes_value: true
     - fasta:
         short: f
+        long: fasta
         required: false
         help: fasta file
         takes_value: true
