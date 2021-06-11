@@ -154,6 +154,7 @@ fn process_longreads(params: &Params, kmer_ids: &HashMap<Vec<u8>, i32>) {
         f.write_all(format!("{}/molecules_longreads_{:03}.bin\n", params.output, filenum).as_bytes()).expect("failed to write");
     }
     to_iterate.par_iter().for_each(|(filenum, read_file)|  {
+        eprintln!("looking at file {}", read_file);
         let mut reader = parse_fastx_file(&read_file).expect("invalid path/file");
         let writer = File::create(format!("{}/molecules_longreads_{:03}.bin",params.output,filenum))
             .expect("Unable to create file");
