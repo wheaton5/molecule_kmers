@@ -436,8 +436,10 @@ fn load_params() -> Params {
             let f = BufReader::new(f);
 
             for line in f.lines() {
-                let line = line.expect("Unable to read long read fofn line");
-                long_reads.push(line.to_string());
+                let text = line.expect("Unable to read long read fofn line");
+                let toks = text.split_whitespace();
+                let toks: Vec<&str> = toks.collect();
+                long_reads.push(toks[0].to_string());
             }
         },
         None => (),
