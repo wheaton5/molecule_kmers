@@ -29,8 +29,8 @@ fn main() {
     let params = load_params();
     eprintln!("load kmers");
     let (kmers, kmer_type) = load_kmers(&params);
-    eprintln!("txg");
     if params.txg_r1s.len() > 0 {
+        eprintln!("txg");
         eprintln!("{:?}\t{:?}\t{:?}\t{:?}", params.txg_r1s, params.txg_trim_r1s, params.txg_r2s, params.txg_trim_r2s);
         process_txg(&params, &kmers);
     }
